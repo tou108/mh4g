@@ -1,16 +1,14 @@
 // data.js - CSVデータ読み込みとパース
 
 window.DB = {
-    skills: [],       // {name, kei, pt, type}
-    deco: [],         // {name, rare, slot, hr, mura, kei1, val1, kei2, val2}
-    equip: {          // head/body/arm/wst/leg
-        head: [], body: [], arm: [], wst: [], leg: []
-    },
-    charms: [],       // {name, slot, kei1, val1, kei2, val2}
-    category: {},     // カテゴリ別スキル
-    fukugo: [],       // 複合スキル
-    kei: [],          // スキル系統一覧
-    hakkutu: [],      // 発掘装備
+    skills: [],
+    deco: [],
+    equip: { head: [], body: [], arm: [], wst: [], leg: [] },
+    charms: [],
+    category: {},
+    fukugo: [],
+    kei: [],
+    hakkutu: [],  // 発掘装備データ { part, type, defMax, kei, val, hr, mura }
 };
 
 function parseCSV(text) {
@@ -51,6 +49,7 @@ async function loadAllData() {
         'data/conf/FUKUGO.txt',
         'data/conf/KEI.txt',
         'data/conf/HAKKUTU.csv',
+        'data/conf/SIBORI.txt',
     ];
 
     const texts = {};
@@ -99,7 +98,6 @@ async function loadAllData() {
                 dragon: parseInt(row[13])||0,
                 skills: [],
             };
-            // スキル系統最大5つ
             for (let j = 0; j < 5; j++) {
                 const ki = row[14 + j*2];
                 const vi = parseInt(row[15 + j*2]);
@@ -111,9 +109,9 @@ async function loadAllData() {
         }
     }
 
-    // お守り
+    // お守り（護石テーブル）
     for (const row of parseCSV(texts['data/MH4G_CHARM.csv'])) {
-        if (row.length < 3) continue;
+        if (row.length < 2) continue;
         DB.charms.push({
             name: row[0], slot: parseInt(row[1])||0,
             kei1: row[2]||'', val1: parseInt(row[3])||0,
@@ -145,12 +143,35 @@ async function loadAllData() {
         if (line.trim()) DB.kei.push(line.trim());
     }
 
-    console.log(`Loaded: skills=${DB.skills.length}, deco=${DB.deco.length}, equip=${Object.values(DB.equip).reduce((a,b)=>a+b.length,0)}`);
+    // ── 発掘装備データの解析 ──
+    // フォーマット: 部位(0:武器/1:頭/2:胴/3:腕/4:腰/5:足), タイプ(0:両方/1:剣士/2:ガンナー),
+    //              最低防御力, 最大防御力, スキル系統, スキル値, 入手時期(集☆), 入手時期(村☆)
+    const partKeyMap = { 1:'head', 2:'body', 3:'arm', 4:'wst', 5:'leg' };
+    for (const row of parseCSV(texts['data/conf/HAKKUTU.csv'])) {
+        if (row.length < 6) continue;
+        const partNum = parseInt(row[0]);
+        if (!partKeyMap[partNum]) continue; // 武器(0)は除外
+        const partKey = partKeyMap[partNum];
+        const kei = row[4];
+        const val = parseInt(row[5]) || 0;
+        if (!kei || val === 0) continue;
+        DB.hakkutu.push({
+            part: partKey,
+            type: parseInt(row[1]) || 0,
+            defMin: parseInt(row[2]) || 0,
+            defMax: parseInt(row[3]) || 0,
+            kei: kei,
+            val: val,
+            hr:   parseInt(row[6]) || 8,
+            mura: parseInt(row[7]) || 99,
+        });
+    }
+
+    console.log(`Loaded: skills=${DB.skills.length}, deco=${DB.deco.length}, equip=${Object.values(DB.equip).reduce((a,b)=>a+b.length,0)}, hakkutu=${DB.hakkutu.length}`);
 }
 
-// スキル系統 → 発動スキル のマップ
 function buildSkillMap() {
-    const map = {}; // kei -> [{name, pt, type}]
+    const map = {};
     for (const s of DB.skills) {
         if (!map[s.kei]) map[s.kei] = [];
         map[s.kei].push(s);
@@ -158,13 +179,11 @@ function buildSkillMap() {
     return map;
 }
 
-// ポイント合計からスキル発動判定
 function calcSkills(keiTotals, type) {
     const skillMap = buildSkillMap();
     const activated = [];
     for (const [kei, total] of Object.entries(keiTotals)) {
         if (!skillMap[kei]) continue;
-        // 最もptに近い（超えない）スキルを発動
         let best = null;
         for (const s of skillMap[kei]) {
             if (s.type !== 0 && s.type !== type) continue;

@@ -157,6 +157,11 @@ async function doSearch() {
     const gender = parseInt(document.getElementById('hunter-gender').value);
     const useExclude = document.getElementById('opt-exclude').checked;
     const useOmamori = document.getElementById('opt-omamori').checked;
+    const hakkutuAll = document.getElementById('opt-hakkutu').checked;
+
+    // お守りリストが空の場合は自動護石検索モードを有効化
+    const effectiveCharmList = useOmamori ? charmList : [];
+    const autoCharm = useOmamori && effectiveCharmList.length === 0;
 
     // 検索条件を構築
     const cond = {
@@ -167,7 +172,9 @@ async function doSearch() {
         hunterType, gender,
         maxResults: effort,
         useExclude,
-        charmList: useOmamori ? charmList : [],
+        charmList: effectiveCharmList,
+        autoCharm,
+        hakkutuAll,
         excludeEquip: useExclude ? excludeEquip : { head:[],body:[],arm:[],wst:[],leg:[],charm:[],deco:[] },
         fixedEquip: useExclude ? fixedEquip : { head:null,body:null,arm:null,wst:null,leg:null,charm:null },
     };
@@ -234,7 +241,7 @@ function renderResults(results) {
           <td>${arm ? arm.name : ''}</td>
           <td>${wst ? wst.name : ''}</td>
           <td>${leg ? leg.name : ''}</td>
-          <td>${charm ? (charm.kei1 || '護石') : '　'}</td>
+          <td>${charm ? (charm.autoCharm || r.autoCharm ? `★${charm.kei1||''}${charm.val1||''}` : (charm.kei1 || '護石')) : '　'}</td>
           <td>${decoStr}</td>
           <td>${wsStr}</td>
           <td>${totalDef}</td>
@@ -280,7 +287,13 @@ function showResultDetail(r) {
     }
     if (r.charm) {
         const c = r.charm;
-        lines.push(`護石: スロ${c.slot} ${c.kei1||''}${c.val1||''} ${c.kei2||''}${c.val2||''}`);
+        const label = r.autoCharm ? '必要護石（自動）' : '護石';
+        const slot = c.slot > 0 ? ` スロ${c.slot}` : '';
+        const sk2 = c.kei2 ? ` / ${c.kei2}+${c.val2||''}` : '';
+        lines.push(`${label}:${slot} ${c.kei1||''}+${c.val1||''}${sk2}`);
+        if (r.autoCharm) {
+            lines.push('  ※このスキルを持つ護石が必要です');
+        }
     } else {
         lines.push('護石: なし');
     }
@@ -419,7 +432,10 @@ function formatResultFull(r) {
         const e = r.equips[i];
         s += `${pJp[i]}：${e ? e.name : '装備なし'}\n`;
     }
-    if (r.charm) s += `護石：${r.charm.kei1||''}${r.charm.val1||''} ${r.charm.kei2||''}${r.charm.val2||''}\n`;
+    if (r.charm) {
+        const autoNote = r.autoCharm ? '【必要護石・自動】' : '護石';
+        s += `${autoNote}：${r.charm.kei1||''}+${r.charm.val1||''} ${r.charm.kei2 ? r.charm.kei2+'+'+r.charm.val2 : ''} スロ${r.charm.slot||0}\n`;
+    }
     if (r.decos && r.decos.length > 0) {
         s += `装飾品：${r.decos.map(d=>d&&d.deco?d.deco.name:'').filter(Boolean).join(', ')}\n`;
     }
@@ -635,74 +651,33 @@ function doExtraSkillSearchAll() {
 }
 
 function extraSkillSearch(results, allCharms) {
+    // 結果から空きスロットを使って何か発動できるスキルを探す
+    const activated = {};
+    for (const r of results.slice(0, 50)) {
+        const freeSlots = (r.equips || []).reduce((s, e) => s + (e ? e.slot : 0), 0);
+        for (const d of DB.deco) {
+            if (d.slot > freeSlots) continue;
+            if (d.kei1) activated[d.kei1] = (activated[d.kei1] || 0) + 1;
+        }
+    }
+
     const tbody = document.getElementById('extra-skill-tbody');
     tbody.innerHTML = '';
 
-    if (allCharms) {
-        // ===== 全お守り検索：必要お守りスキルを計算 =====
-        const charmNeeded = {}; // kei -> { minPt, cnt }
-
-        for (const r of results.slice(0, 50)) {
-            // charm 抜きのスキル系統合計を算出
-            const base = Object.assign({}, r.keiTotals || {});
-            const charm = r.charm;
-            if (charm) {
-                if (charm.kei1) base[charm.kei1] = (base[charm.kei1] || 0) - (charm.val1 || 0);
-                if (charm.kei2) base[charm.kei2] = (base[charm.kei2] || 0) - (charm.val2 || 0);
-            }
-
-            // 各スキルに対して「あと何pt あれば発動するか」を調べる
-            for (const s of DB.skills.filter(sk => sk.pt > 0)) {
-                const current = base[s.kei] || 0;
-                const needed = s.pt - current;
-                if (needed > 0 && needed <= 10) { // お守りで現実的に補える範囲
-                    if (!charmNeeded[s.kei]) charmNeeded[s.kei] = { minPt: needed, cnt: 0 };
-                    charmNeeded[s.kei].cnt++;
-                    if (needed < charmNeeded[s.kei].minPt) charmNeeded[s.kei].minPt = needed;
+    const sorted = Object.entries(activated).sort((a,b) => b[1]-a[1]).slice(0, 30);
+    for (const [kei, cnt] of sorted) {
+        // keiに対応するスキルを探す
+        const skills = DB.skills.filter(s => s.kei === kei && s.pt > 0);
+        for (const s of skills) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${s.name}</td><td>${cnt}件</td>`;
+            tr.addEventListener('click', () => {
+                if (selectedSkills.length < 10 && !selectedSkills.some(ss => ss.name === s.name)) {
+                    selectedSkills.push({ kei: s.kei, name: s.name, pt: s.pt });
+                    renderSelectedSkills();
                 }
-            }
-        }
-
-        const sorted = Object.entries(charmNeeded).sort((a, b) => b[1].cnt - a[1].cnt).slice(0, 30);
-        for (const [kei, info] of sorted) {
-            const skills = DB.skills.filter(s => s.kei === kei && s.pt > 0);
-            for (const s of skills) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${s.name}</td><td>${kei}+${info.minPt}以上 (${info.cnt}件)</td>`;
-                tr.addEventListener('click', () => {
-                    if (selectedSkills.length < 10 && !selectedSkills.some(ss => ss.name === s.name)) {
-                        selectedSkills.push({ kei: s.kei, name: s.name, pt: s.pt });
-                        renderSelectedSkills();
-                    }
-                });
-                tbody.appendChild(tr);
-            }
-        }
-
-    } else {
-        // ===== 従来通り：空きスロットで入る装飾品スキルを検索 =====
-        const activated = {};
-        for (const r of results.slice(0, 50)) {
-            const freeSlots = (r.equips || []).reduce((s, e) => s + (e ? e.slot : 0), 0);
-            for (const d of DB.deco) {
-                if (d.slot > freeSlots) continue;
-                if (d.kei1) activated[d.kei1] = (activated[d.kei1] || 0) + 1;
-            }
-        }
-        const sorted = Object.entries(activated).sort((a, b) => b[1] - a[1]).slice(0, 30);
-        for (const [kei, cnt] of sorted) {
-            const skills = DB.skills.filter(s => s.kei === kei && s.pt > 0);
-            for (const s of skills) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${s.name}</td><td>${cnt}件</td>`;
-                tr.addEventListener('click', () => {
-                    if (selectedSkills.length < 10 && !selectedSkills.some(ss => ss.name === s.name)) {
-                        selectedSkills.push({ kei: s.kei, name: s.name, pt: s.pt });
-                        renderSelectedSkills();
-                    }
-                });
-                tbody.appendChild(tr);
-            }
+            });
+            tbody.appendChild(tr);
         }
     }
 }

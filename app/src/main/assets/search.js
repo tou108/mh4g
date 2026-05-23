@@ -1,20 +1,4 @@
-// search.js - 高速検索エンジン（スロット共有対応の厳密枝刈り版）
-//
-// ====== 旧版の問題点と修正内容 ======
-//
-// 【問題1：最重要バグ】スロット貢献を各スキルに独立カウントしていた
-//   旧 canMeet: 各スキルkに対し「残りスロット全部をスキルkに使える」と仮定。
-//   スキルが5個あると実際3スロットなのに「5スキル×3スロット分」を期待するため
-//   枝刈りが全く効かなくなる。
-//
-//   修正: 「全スキルの不足分を補うのに必要なスロット合計」≤「実際のスロット上限」
-//         という正しい条件で枝刈りする。
-//
-// 【問題2】各ループでオブジェクトスプレッド { ...k2 } を大量生成していた
-//   修正: 累積スキルを Int32Array で管理し、加算/減算のみで更新する。
-//
-// 【問題3】スキル数が多い時に候補リストが絞り込めていなかった
-//   修正: 支配関係（全スキルで劣り、スロット数も同等以下）による事前除外を追加。
+// search.js - 高速検索エンジン（自動お守り検索＋発掘装備対応版）
 
 window.SearchState = { running: false, aborted: false };
 
@@ -27,17 +11,19 @@ window.SearchCondition = {
     excludeEquip: { head:[], body:[], arm:[], wst:[], leg:[], charm:[], deco:[] },
     fixedEquip: { head:null, body:null, arm:null, wst:null, leg:null, charm:null },
     charmList: [],
+    autoCharm: false,
 };
 
 window.SearchResults = [];
 window.AdditionalSkillResults = [];
 
-// ─── ユーティリティ（変更なし） ───
+// ─── ユーティリティ ───
 
 function getEquipCandidates(part, cond) {
     let list = [...DB.equip[part]];
     list.unshift({ part, name:'装備なし', sex:0, type:0, rare:0, slot:0,
         hr:0, mura:0, defInit:0, defMax:0, fire:0, water:0, thunder:0, ice:0, dragon:0, skills:[] });
+
     if (cond.useExclude) {
         const excl = cond.excludeEquip[part] || [];
         list = list.filter(e => !excl.includes(e.name));
@@ -45,6 +31,30 @@ function getEquipCandidates(part, cond) {
     if (cond.fixedEquip[part]) return [cond.fixedEquip[part]];
     if (cond.gender !== 0) list = list.filter(e => e.sex === 0 || e.sex === cond.gender);
     if (cond.hunterType !== 0) list = list.filter(e => e.type === 0 || e.type === cond.hunterType);
+
+    // ── 発掘装備を追加 ──
+    if (cond.hakkutuAll && DB.hakkutu && DB.hakkutu.length > 0) {
+        const partHakkutu = DB.hakkutu.filter(h => h.part === part);
+        // 対象スキルの系統セット
+        const targetKeiSet = new Set(cond.targetSkills.map(t => t.kei));
+        for (const h of partHakkutu) {
+            if (!targetKeiSet.has(h.kei)) continue;
+            if (cond.hunterType !== 0 && h.type !== 0 && h.type !== cond.hunterType) continue;
+            // スロット0〜3の発掘防具を生成
+            for (let slot = 0; slot <= 3; slot++) {
+                list.push({
+                    part, name: `発掘${['','頭','胴','腕','腰','脚'][['head','body','arm','wst','leg'].indexOf(part)+1]}(${h.kei}+${h.val} ○${slot})`,
+                    sex: 0, type: h.type, rare: 8, slot,
+                    hr: h.hr, mura: h.mura,
+                    defInit: Math.floor(h.defMax * 0.5), defMax: h.defMax,
+                    fire: 0, water: 0, thunder: 0, ice: 0, dragon: 0,
+                    skills: [{ kei: h.kei, val: h.val }],
+                    isHakkutu: true,
+                });
+            }
+        }
+    }
+
     return list;
 }
 
@@ -79,6 +89,7 @@ function calcScore(equips) {
     return { noEquip, defTotal, resTotal };
 }
 
+// ── 装飾品最適化（複数枚対応版）──
 function optimizeDeco(freeSlots, targetKeis, cond) {
     if (freeSlots <= 0 || !cond.useDecoration) return { placed: [], totals: {} };
     let decoList = DB.deco.filter(d => {
@@ -93,34 +104,88 @@ function optimizeDeco(freeSlots, targetKeis, cond) {
                        (targetKeis.includes(b.kei2) ? Math.abs(b.val2||0) : 0);
         return bScore - aScore;
     });
+
     const placed = [];
     let remaining = freeSlots;
     for (const d of sorted) {
         if (d.slot > remaining) continue;
-        placed.push({ deco: d, count: 1 });
-        remaining -= d.slot;
+        // ── バグ修正：複数枚配置に対応 ──
+        const count = Math.floor(remaining / d.slot);
+        if (count <= 0) continue;
+        placed.push({ deco: d, count });
+        remaining -= d.slot * count;
         if (remaining <= 0) break;
     }
+
     const totals = {};
-    for (const { deco } of placed) {
-        if (deco.kei1) totals[deco.kei1] = (totals[deco.kei1]||0) + (deco.val1||0);
-        if (deco.kei2) totals[deco.kei2] = (totals[deco.kei2]||0) + (deco.val2||0);
+    for (const { deco, count } of placed) {
+        if (deco.kei1) totals[deco.kei1] = (totals[deco.kei1]||0) + (deco.val1||0) * count;
+        if (deco.kei2) totals[deco.kei2] = (totals[deco.kei2]||0) + (deco.val2||0) * count;
     }
     return { placed, totals };
 }
 
-// ─── メイン検索 ───
+// ── 自動お守り検索 ──
+function autoSearchCharm(armorSkills, baseSlots, targetKeis, cond) {
+    // まず護石なしで試す
+    const { placed: placed0, totals: decoSkills0 } = optimizeDeco(baseSlots, targetKeis, cond);
+    const allSkills0 = { ...armorSkills };
+    for (const [k, v] of Object.entries(decoSkills0)) allSkills0[k] = (allSkills0[k]||0) + v;
 
+    if (meetsTarget(allSkills0, cond)) {
+        return { charm: null, placed: placed0, allSkills: allSkills0 };
+    }
+
+    // 不足スキルを計算
+    const deficits = [];
+    for (const t of cond.targetSkills) {
+        if (t.pt <= 0) continue;
+        const have = allSkills0[t.kei] || 0;
+        if (have < t.pt) deficits.push({ kei: t.kei, need: t.pt - have });
+    }
+
+    if (deficits.length === 0 || deficits.length > 2) return null;
+
+    // 必要な護石を探索（スロット3→0の順に試して最小スロットで成立するものを採用）
+    let bestResult = null;
+    for (let slot = 3; slot >= 0; slot--) {
+        const charm = {
+            kei1: deficits[0].kei,
+            val1: Math.min(deficits[0].need, 7),
+            kei2: deficits.length > 1 ? deficits[1].kei : '',
+            val2: deficits.length > 1 ? Math.min(deficits[1].need, 7) : 0,
+            slot,
+            name: '必要護石（自動）',
+        };
+
+        const charmSkills = {};
+        if (charm.kei1) charmSkills[charm.kei1] = charm.val1;
+        if (charm.kei2) charmSkills[charm.kei2] = charm.val2;
+
+        const { placed, totals: decoSkills } = optimizeDeco(baseSlots + slot, targetKeis, cond);
+        const allSkills = { ...armorSkills };
+        for (const [k, v] of Object.entries(charmSkills)) allSkills[k] = (allSkills[k]||0) + v;
+        for (const [k, v] of Object.entries(decoSkills)) allSkills[k] = (allSkills[k]||0) + v;
+
+        if (meetsTarget(allSkills, cond)) {
+            bestResult = { charm, placed, allSkills };
+            // スロットが少ない方が良い護石なので続けて試す
+        }
+    }
+    return bestResult;
+}
+
+// ── メイン検索 ──
 async function startSearch(cond) {
-    SearchState.running = true;
+    SearchState.running = false;
     SearchState.aborted = false;
     SearchResults.length = 0;
+    SearchState.running = true;
 
     const parts = ['head','body','arm','wst','leg'];
     const targetKeis = cond.targetSkills.map(t => t.kei);
     const N = targetKeis.length;
 
-    // スキル系統 → インデックス変換
     const keiToIdx = {};
     for (let i = 0; i < N; i++) keiToIdx[targetKeis[i]] = i;
     const targetPts = cond.targetSkills.map(t => t.pt);
@@ -140,7 +205,6 @@ async function startSearch(cond) {
         }
     }
 
-    // ── 装備を整数配列でラップ ──
     function wrapEquip(e) {
         const skillArr = new Int16Array(N);
         for (const s of (e.skills||[])) {
@@ -150,7 +214,6 @@ async function startSearch(cond) {
         return { eq: e, skillArr, slot: e.slot || 0 };
     }
 
-    // ── 支配関係による候補除外 ──
     function dominancePrune(list) {
         if (list.length <= 20 || N < 2) return list;
         const dominated = new Uint8Array(list.length);
@@ -171,7 +234,6 @@ async function startSearch(cond) {
         return list.filter((_, i) => !dominated[i]);
     }
 
-    // ── 各部位の候補リスト構築 ──
     const candidates = {};
     const maxPartSkill = {};
     const maxPartSlot = {};
@@ -210,22 +272,31 @@ async function startSearch(cond) {
     }
 
     // ── お守り候補 ──
+    const isAutoCharm = cond.autoCharm;
     const charmCandidates = [null, ...(cond.charmList || [])];
+
+    // ── canMeet用のお守り最大値 ──
     const maxCharmSkill = new Int32Array(N);
     let maxCharmSlot = 0;
-    for (const c of charmCandidates) {
-        if (!c) continue;
-        const i1 = keiToIdx[c.kei1];
-        if (i1 !== undefined && (c.val1||0) > maxCharmSkill[i1]) maxCharmSkill[i1] = c.val1||0;
-        const i2 = keiToIdx[c.kei2];
-        if (i2 !== undefined && (c.val2||0) > maxCharmSkill[i2]) maxCharmSkill[i2] = c.val2||0;
-        if ((c.slot||0) > maxCharmSlot) maxCharmSlot = c.slot||0;
+
+    if (isAutoCharm) {
+        // 自動護石検索：最大7ptのスキル×スロット3を仮定（枝刈り用上限）
+        for (let i = 0; i < N; i++) maxCharmSkill[i] = 7;
+        maxCharmSlot = 3;
+    } else {
+        for (const c of charmCandidates) {
+            if (!c) continue;
+            const i1 = keiToIdx[c.kei1];
+            if (i1 !== undefined && (c.val1||0) > maxCharmSkill[i1]) maxCharmSkill[i1] = c.val1||0;
+            const i2 = keiToIdx[c.kei2];
+            if (i2 !== undefined && (c.val2||0) > maxCharmSkill[i2]) maxCharmSkill[i2] = c.val2||0;
+            if ((c.slot||0) > maxCharmSlot) maxCharmSlot = c.slot||0;
+        }
     }
 
     const weaponSlotActual = (cond.weaponSlot === -1) ? 0 : Math.max(0, cond.weaponSlot);
     const weaponSlotUpper  = (cond.weaponSlot === -1) ? 3 : weaponSlotActual;
 
-    // ── サフィックス事前計算 ──
     const suffixMaxSlot = new Int32Array(parts.length + 1);
     for (let i = parts.length - 1; i >= 0; i--) {
         suffixMaxSlot[i] = suffixMaxSlot[i + 1] + maxPartSlot[parts[i]];
@@ -241,7 +312,6 @@ async function startSearch(cond) {
         suffixMaxSkill[i] = arr;
     }
 
-    // ── 改良版枝刈り ──
     const cur = new Int32Array(N);
 
     function canMeet(remainIdx) {
@@ -293,46 +363,78 @@ async function startSearch(cond) {
 
                                         const baseSlots = headC.slot + bodyC.slot + armC.slot
                                                         + wstC.slot + legC.slot + weaponSlotActual;
+                                        const equips = [headC.eq, bodyC.eq, armC.eq, wstC.eq, legC.eq];
 
-                                        for (const charm of charmCandidates) {
-                                            if (SearchState.aborted) break;
-
-                                            const freeSlots = baseSlots + (charm ? (charm.slot||0) : 0);
-                                            const { placed, totals: decoSkills } = optimizeDeco(
-                                                freeSlots, targetKeis, cond
-                                            );
-
-                                            const allSkills = {};
-                                            const equips = [headC.eq, bodyC.eq, armC.eq, wstC.eq, legC.eq];
+                                        // ── 自動護石 or 手動護石リスト ──
+                                        if (isAutoCharm) {
+                                            // 装備のスキル合計を計算
+                                            const armorSkills = {};
                                             for (const eq of equips) {
                                                 for (const s of (eq.skills||[])) {
-                                                    allSkills[s.kei] = (allSkills[s.kei]||0) + s.val;
+                                                    armorSkills[s.kei] = (armorSkills[s.kei]||0) + s.val;
                                                 }
                                             }
-                                            if (charm) {
-                                                if (charm.kei1) allSkills[charm.kei1] = (allSkills[charm.kei1]||0) + (charm.val1||0);
-                                                if (charm.kei2) allSkills[charm.kei2] = (allSkills[charm.kei2]||0) + (charm.val2||0);
+
+                                            const res = autoSearchCharm(armorSkills, baseSlots, targetKeis, cond);
+                                            if (res && !hasExcludedSkill(res.allSkills, cond)) {
+                                                const hunterType = cond.hunterType || 1;
+                                                const activatedSkills = calcSkills(res.allSkills, hunterType);
+                                                const score = calcScore(equips);
+                                                SearchResults.push({
+                                                    equips: [...equips],
+                                                    charm: res.charm,
+                                                    decos: res.placed,
+                                                    skills: activatedSkills,
+                                                    keiTotals: res.allSkills,
+                                                    score,
+                                                    autoCharm: res.charm !== null,
+                                                });
+                                                found++;
+                                                if (found >= cond.maxResults) {
+                                                    SearchState.aborted = true;
+                                                }
                                             }
-                                            for (const [k, v] of Object.entries(decoSkills)) {
-                                                allSkills[k] = (allSkills[k]||0) + v;
-                                            }
+                                        } else {
+                                            // 手動護石リストを使用（元の処理）
+                                            for (const charm of charmCandidates) {
+                                                if (SearchState.aborted) break;
 
-                                            if (!meetsTarget(allSkills, cond)) continue;
-                                            if (hasExcludedSkill(allSkills, cond)) continue;
+                                                const freeSlots = baseSlots + (charm ? (charm.slot||0) : 0);
+                                                const { placed, totals: decoSkills } = optimizeDeco(
+                                                    freeSlots, targetKeis, cond
+                                                );
 
-                                            const hunterType = cond.hunterType || 1;
-                                            const activatedSkills = calcSkills(allSkills, hunterType);
-                                            const score = calcScore(equips);
+                                                const allSkills = {};
+                                                for (const eq of equips) {
+                                                    for (const s of (eq.skills||[])) {
+                                                        allSkills[s.kei] = (allSkills[s.kei]||0) + s.val;
+                                                    }
+                                                }
+                                                if (charm) {
+                                                    if (charm.kei1) allSkills[charm.kei1] = (allSkills[charm.kei1]||0) + (charm.val1||0);
+                                                    if (charm.kei2) allSkills[charm.kei2] = (allSkills[charm.kei2]||0) + (charm.val2||0);
+                                                }
+                                                for (const [k, v] of Object.entries(decoSkills)) {
+                                                    allSkills[k] = (allSkills[k]||0) + v;
+                                                }
 
-                                            SearchResults.push({
-                                                equips: [...equips], charm, decos: placed,
-                                                skills: activatedSkills, keiTotals: allSkills, score,
-                                            });
-                                            found++;
+                                                if (!meetsTarget(allSkills, cond)) continue;
+                                                if (hasExcludedSkill(allSkills, cond)) continue;
 
-                                            if (found >= cond.maxResults) {
-                                                SearchState.aborted = true;
-                                                break;
+                                                const hunterType = cond.hunterType || 1;
+                                                const activatedSkills = calcSkills(allSkills, hunterType);
+                                                const score = calcScore(equips);
+
+                                                SearchResults.push({
+                                                    equips: [...equips], charm, decos: placed,
+                                                    skills: activatedSkills, keiTotals: allSkills, score,
+                                                });
+                                                found++;
+
+                                                if (found >= cond.maxResults) {
+                                                    SearchState.aborted = true;
+                                                    break;
+                                                }
                                             }
                                         }
 
