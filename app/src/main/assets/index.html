@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
+<title>頑シミュ MH4G ver.0.9.6</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Monospace', monospace; font-size: 13px; background: #f0f0f0; color: #000; }
+
+/* タブバー */
+#tabbar { display: flex; background: #d4d0c8; border-bottom: 2px solid #808080; overflow-x: auto; white-space: nowrap; }
+.tab-btn { padding: 4px 10px; border: 1px solid #808080; border-bottom: none; background: #c0c0c0; cursor: pointer; font-size: 12px; flex-shrink: 0; }
+.tab-btn.active { background: #f0f0f0; border-bottom: 1px solid #f0f0f0; font-weight: bold; }
+.tab-btn:hover { background: #e0e0e0; }
+
+/* タブコンテンツ */
+.tab-content { display: none; }
+.tab-content.active { display: flex; flex-direction: column; height: calc(100vh - 28px); }
+
+/* シミュレータタブ */
+#tab-simu { flex-direction: row; flex-wrap: wrap; }
+
+/* 左パネル */
+#left-panel { width: 220px; min-width: 200px; border-right: 1px solid #808080; display: flex; flex-direction: column; height: calc(100vh - 28px); overflow: hidden; }
+
+/* スキル選択エリア */
+#skill-area { flex: 1; overflow-y: auto; padding: 2px; }
+.skill-row { display: flex; align-items: center; margin-bottom: 2px; }
+.skill-row select { flex: 1; font-size: 12px; border: 1px solid #808080; background: white; }
+.skill-row .del-btn { padding: 0 4px; font-size: 11px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+
+/* スキル選択ドロップダウン */
+#skill-controls { padding: 3px; border-top: 1px solid #808080; }
+#skill-controls select { width: 100%; font-size: 12px; margin-bottom: 2px; border: 1px solid #808080; }
+#add-skill-btn { width: 100%; font-size: 12px; padding: 2px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+
+/* 武器スロ・タイプ選択 */
+#weapon-area { padding: 3px; border-top: 1px solid #808080; font-size: 12px; }
+.weapon-row { display: flex; align-items: center; margin-bottom: 2px; }
+.weapon-row label { width: 80px; }
+.weapon-row select { flex: 1; font-size: 12px; border: 1px solid #808080; }
+
+/* 検索オプション */
+#search-opts { padding: 3px; border-top: 1px solid #808080; font-size: 12px; }
+.opt-row { display: flex; align-items: center; margin-bottom: 2px; }
+.opt-row label { flex: 1; }
+.opt-row input[type=checkbox] { margin-right: 4px; }
+.opt-row input[type=number] { width: 50px; border: 1px solid #808080; font-size: 12px; text-align: right; }
+
+/* 検索ボタン */
+#search-btn-area { padding: 3px; border-top: 1px solid #808080; display: flex; gap: 3px; }
+#search-btn { flex: 1; padding: 4px; font-size: 13px; font-weight: bold; border: 2px solid #808080; background: #c0c0c0; cursor: pointer; }
+#abort-btn { padding: 4px 8px; font-size: 12px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; display: none; }
+#search-btn:hover { background: #b0b0b0; }
+
+/* 右パネル */
+#right-panel { flex: 1; display: flex; flex-direction: column; height: calc(100vh - 28px); overflow: hidden; }
+
+/* 結果上部: ステータス */
+#result-status { padding: 2px 5px; background: #d4d0c8; border-bottom: 1px solid #808080; font-size: 12px; display: flex; align-items: center; gap: 10px; }
+
+/* スプリッタ */
+#result-splitter { flex: 1; display: flex; overflow: hidden; }
+
+/* 結果リスト */
+#result-list-area { flex: 1; overflow: auto; min-width: 0; }
+#result-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#result-table th { background: #c0c0c0; border: 1px solid #808080; padding: 2px 4px; white-space: nowrap; position: sticky; top: 0; cursor: pointer; }
+#result-table td { border: 1px solid #c0c0c0; padding: 2px 4px; white-space: nowrap; cursor: pointer; }
+#result-table tr:hover td { background: #ddeeff; }
+#result-table tr.selected td { background: #b8d4f0; }
+
+/* 詳細パネル */
+#detail-panel { width: 220px; min-width: 180px; border-left: 1px solid #808080; overflow: auto; font-size: 12px; }
+#detail-panel pre { padding: 5px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+
+/* 追加スキル検索エリア */
+#extra-skill-area { height: 120px; border-top: 1px solid #808080; display: flex; }
+#extra-skill-list { flex: 1; overflow: auto; font-size: 12px; }
+#extra-skill-list table { width: 100%; border-collapse: collapse; }
+#extra-skill-list th { background: #c0c0c0; border: 1px solid #808080; padding: 1px 3px; }
+#extra-skill-list td { border: 1px solid #c0c0c0; padding: 1px 3px; cursor: pointer; }
+#extra-skill-list tr:hover td { background: #ddeeff; }
+
+/* お守り設定タブ */
+#tab-charm { padding: 5px; }
+#charm-top { display: flex; gap: 5px; margin-bottom: 5px; }
+#charm-add-btn { padding: 3px 8px; font-size: 12px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+#charm-sort-btn { padding: 3px 8px; font-size: 12px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+#charm-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#charm-table th { background: #c0c0c0; border: 1px solid #808080; padding: 2px 4px; }
+#charm-table td { border: 1px solid #c0c0c0; padding: 2px 4px; }
+#charm-table tr:hover td { background: #ddeeff; }
+
+/* マイセットタブ */
+#tab-myset { padding: 5px; }
+#myset-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#myset-table th { background: #c0c0c0; border: 1px solid #808080; padding: 2px 4px; }
+#myset-table td { border: 1px solid #c0c0c0; padding: 2px 4px; cursor: pointer; }
+#myset-table tr:hover td { background: #ddeeff; }
+
+/* 固定/除外装備タブ */
+.equip-setting-tab { padding: 5px; overflow: auto; }
+.equip-setting-tab table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.equip-setting-tab th { background: #c0c0c0; border: 1px solid #808080; padding: 2px 4px; }
+.equip-setting-tab td { border: 1px solid #c0c0c0; padding: 2px 4px; }
+.equip-setting-tab tr:hover td { background: #ddeeff; }
+.equip-setting-top { display: flex; gap: 5px; margin-bottom: 5px; }
+.equip-setting-top button { padding: 3px 8px; font-size: 12px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+
+/* ダイアログ */
+.dialog-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+.dialog-overlay.show { display: flex; }
+.dialog { background: #f0f0f0; border: 2px solid #808080; padding: 10px; min-width: 280px; max-width: 90vw; }
+.dialog h3 { font-size: 13px; margin-bottom: 8px; border-bottom: 1px solid #808080; padding-bottom: 4px; }
+.dialog-row { display: flex; align-items: center; margin-bottom: 5px; font-size: 12px; }
+.dialog-row label { width: 80px; }
+.dialog-row select, .dialog-row input { flex: 1; font-size: 12px; border: 1px solid #808080; padding: 1px 3px; }
+.dialog-btns { display: flex; gap: 5px; justify-content: flex-end; margin-top: 8px; }
+.dialog-btns button { padding: 3px 12px; font-size: 12px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+
+/* コンテキストメニュー */
+#ctx-menu { display: none; position: fixed; background: #f0f0f0; border: 1px solid #808080; z-index: 2000; min-width: 160px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); }
+#ctx-menu div { padding: 4px 16px; font-size: 12px; cursor: pointer; }
+#ctx-menu div:hover { background: #0078d7; color: white; }
+#ctx-menu .separator { border-top: 1px solid #808080; padding: 0; margin: 2px 0; height: 0; }
+
+/* 進行度バー */
+#progress-bar { height: 4px; background: #0078d7; width: 0%; transition: width 0.1s; }
+
+/* スキル系統カテゴリ選択 */
+#category-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-bottom: 1px solid #808080; }
+.cat-btn { padding: 2px 6px; font-size: 11px; border: 1px solid #808080; background: #c0c0c0; cursor: pointer; }
+.cat-btn.active { background: #0078d7; color: white; }
+
+/* スキルリスト */
+#skill-list-scroll { flex: 1; overflow-y: auto; }
+#skill-list-inner { padding: 2px; }
+.skill-item { padding: 2px 5px; font-size: 12px; cursor: pointer; border-bottom: 1px solid #e0e0e0; }
+.skill-item:hover { background: #ddeeff; }
+.skill-item.selected { background: #b8d4f0; }
+
+/* ローディング */
+#loading { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: #f0f0f0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 14px; }
+
+/* 発掘装備設定 */
+#tab-hakkutu { padding: 5px; overflow: auto; font-size: 12px; }
+#hakkutu-list { column-count: 2; column-gap: 10px; }
+.hakkutu-item { break-inside: avoid; margin-bottom: 3px; }
+
+/* スクロールバー */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #d0d0d0; }
+::-webkit-scrollbar-thumb { background: #909090; }
+</style>
+</head>
+<body>
+
+<!-- ローディング画面 -->
+<div id="loading">
+  <div>頑シミュ MH4G ver.0.9.6</div>
+  <div style="margin-top:10px;font-size:12px;">データ読み込み中...</div>
+</div>
+
+<!-- タブバー -->
+<div id="tabbar">
+  <div class="tab-btn active" onclick="showTab('simu')">シミュレータ</div>
+  <div class="tab-btn" onclick="showTab('charm')">お守り設定</div>
+  <div class="tab-btn" onclick="showTab('myset')">マイセット</div>
+  <div class="tab-btn" onclick="showTab('kotei')">固定装備設定</div>
+  <div class="tab-btn" onclick="showTab('jyogai')">除外装備設定</div>
+  <div class="tab-btn" onclick="showTab('decoex')">装飾品除外設定</div>
+  <div class="tab-btn" onclick="showTab('hakkutu')">発掘装備設定</div>
+</div>
+
+<!-- ===== シミュレータタブ ===== -->
+<div id="tab-simu" class="tab-content active" style="flex-direction:row;">
+  <!-- 左パネル -->
+  <div id="left-panel">
+    <!-- スキル選択リスト -->
+    <div id="skill-area">
+      <div style="background:#c0c0c0;padding:2px 5px;font-size:12px;font-weight:bold;">スキル選択</div>
+      <div id="selected-skills"></div>
+    </div>
+
+    <!-- スキル追加 -->
+    <div id="skill-controls">
+      <div style="font-size:11px;margin-bottom:2px;">カテゴリ</div>
+      <select id="cat-select" onchange="onCatChange()" style="width:100%;font-size:12px;margin-bottom:2px;border:1px solid #808080;"></select>
+      <div style="font-size:11px;margin-bottom:2px;">スキル</div>
+      <select id="skill-select" style="width:100%;font-size:12px;margin-bottom:2px;border:1px solid #808080;" size="4" ondblclick="addSelectedSkill()"></select>
+      <button id="add-skill-btn" onclick="addSelectedSkill()">▲ スキル選択に追加</button>
+      <button onclick="clearAllSkills()" style="width:100%;font-size:11px;padding:1px;border:1px solid #808080;background:#c0c0c0;cursor:pointer;margin-top:2px;">スキル選択を全てクリア</button>
+    </div>
+
+    <!-- 武器スロ -->
+    <div id="weapon-area">
+      <div class="weapon-row">
+        <label>武器スロ・装飾品</label>
+        <select id="weapon-slot" style="font-size:12px;border:1px solid #808080;">
+          <option value="-1">自動</option>
+          <option value="0">武器スロなし</option>
+          <option value="1">武器スロ１</option>
+          <option value="2">武器スロ２</option>
+          <option value="3">武器スロ３</option>
+          <option value="-2">装飾品なし</option>
+        </select>
+      </div>
+      <div class="weapon-row">
+        <label>タイプ</label>
+        <select id="hunter-type" style="font-size:12px;border:1px solid #808080;">
+          <option value="0">両方</option>
+          <option value="1">剣士</option>
+          <option value="2">ガンナー</option>
+        </select>
+      </div>
+      <div class="weapon-row">
+        <label>性別</label>
+        <select id="hunter-gender" style="font-size:12px;border:1px solid #808080;">
+          <option value="0">両方</option>
+          <option value="1">男性</option>
+          <option value="2">女性</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 検索オプション -->
+    <div id="search-opts">
+      <div class="opt-row">
+        <input type="checkbox" id="opt-exclude" onchange="saveOpts()">
+        <label for="opt-exclude">除外・固定を使う</label>
+      </div>
+      <div class="opt-row">
+        <input type="checkbox" id="opt-omamori" checked onchange="saveOpts()">
+        <label for="opt-omamori">お守り検索</label>
+      </div>
+      <div class="opt-row">
+        <input type="checkbox" id="opt-matome" onchange="saveOpts()">
+        <label for="opt-matome">まとめ装備検索</label>
+      </div>
+      <div class="opt-row">
+        <input type="checkbox" id="opt-hakkutu" onchange="saveOpts()">
+        <label for="opt-hakkutu">発掘を全て含む</label>
+      </div>
+      <div class="opt-row">
+        <label for="opt-effort"> 頑張り度</label>
+        <input type="number" id="opt-effort" value="20" min="1" max="9999" onchange="saveOpts()">
+      </div>
+    </div>
+
+    <!-- 検索ボタン -->
+    <div id="search-btn-area">
+      <button id="search-btn" onclick="doSearch()">検索</button>
+      <button id="abort-btn" onclick="doAbort()">中断</button>
+    </div>
+
+    <div id="progress-bar-wrap" style="height:4px;background:#e0e0e0;">
+      <div id="progress-bar"></div>
+    </div>
+  </div>
+
+  <!-- 右パネル -->
+  <div id="right-panel">
+    <!-- ステータスバー -->
+    <div id="result-status">
+      <span id="result-label">結果0件</span>
+      <span id="search-time"></span>
+      <button onclick="doExtraSkillSearch()" style="font-size:11px;padding:1px 6px;border:1px solid #808080;background:#c0c0c0;cursor:pointer;">追加スキル検索（武器スロ指定推奨）</button>
+      <button onclick="doExtraSkillSearchAll()" style="font-size:11px;padding:1px 6px;border:1px solid #808080;background:#c0c0c0;cursor:pointer;">追加スキル検索【全お守り】</button>
+    </div>
+
+    <!-- 結果テーブル + 詳細パネル -->
+    <div id="result-splitter">
+      <div id="result-list-area">
+        <table id="result-table">
+          <thead>
+            <tr>
+              <th>頭</th><th>胴</th><th>腕</th><th>腰</th><th>脚</th><th>お守り</th>
+              <th>装飾品</th><th>武</th><th>防</th><th>火</th><th>水</th><th>雷</th><th>氷</th><th>龍</th><th>計</th>
+            </tr>
+          </thead>
+          <tbody id="result-tbody"></tbody>
+        </table>
+      </div>
+      <div id="detail-panel">
+        <div style="background:#c0c0c0;padding:2px 5px;font-size:12px;font-weight:bold;">【詳細情報】</div>
+        <pre id="detail-text">結果を選択してください</pre>
+      </div>
+    </div>
+
+    <!-- 追加スキル検索結果 -->
+    <div id="extra-skill-area">
+      <div style="width:100%;">
+        <div style="background:#c0c0c0;padding:2px 5px;font-size:12px;font-weight:bold;">追加スキル検索結果</div>
+        <div id="extra-skill-list">
+          <table>
+            <thead><tr><th>スキル</th><th>必要お守り</th></tr></thead>
+            <tbody id="extra-skill-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== お守り設定タブ ===== -->
+<div id="tab-charm" class="tab-content">
+  <div id="charm-top">
+    <button id="charm-add-btn" onclick="openCharmDialog(null)">お守り登録</button>
+    <button id="charm-sort-btn" onclick="sortCharms()">並替</button>
+    <button onclick="clearAllCharms()" style="padding:3px 8px;font-size:12px;border:1px solid #808080;background:#c0c0c0;cursor:pointer;">全てクリア</button>
+  </div>
+  <div style="overflow:auto;flex:1;">
+    <table id="charm-table">
+      <thead><tr><th>名前</th><th>スロ</th><th>スキル系統１</th><th>値１</th><th>スキル系統２</th><th>値２</th><th>操作</th></tr></thead>
+      <tbody id="charm-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== マイセットタブ ===== -->
+<div id="tab-myset" class="tab-content">
+  <div style="padding:5px;">
+    <button onclick="clearAllMysets()" style="padding:3px 8px;font-size:12px;border:1px solid #808080;background:#c0c0c0;cursor:pointer;margin-bottom:5px;">全て削除</button>
+  </div>
+  <div style="overflow:auto;">
+    <table id="myset-table">
+      <thead><tr><th>セット名</th><th>スキル</th><th>頭</th><th>胴</th><th>腕</th><th>腰</th><th>脚</th><th>お守り</th><th>メモ</th><th>操作</th></tr></thead>
+      <tbody id="myset-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 固定装備設定タブ ===== -->
+<div id="tab-kotei" class="tab-content equip-setting-tab">
+  <div class="equip-setting-top">
+    <button onclick="clearFixed()">全てクリア</button>
+  </div>
+  <table>
+    <thead><tr><th>部位</th><th>固定装備</th><th>操作</th></tr></thead>
+    <tbody id="fixed-tbody">
+      <tr><td>頭</td><td id="fixed-head-name">（なし）</td><td><button onclick="clearFixed('head')">クリア</button></td></tr>
+      <tr><td>胴</td><td id="fixed-body-name">（なし）</td><td><button onclick="clearFixed('body')">クリア</button></td></tr>
+      <tr><td>腕</td><td id="fixed-arm-name">（なし）</td><td><button onclick="clearFixed('arm')">クリア</button></td></tr>
+      <tr><td>腰</td><td id="fixed-wst-name">（なし）</td><td><button onclick="clearFixed('wst')">クリア</button></td></tr>
+      <tr><td>脚</td><td id="fixed-leg-name">（なし）</td><td><button onclick="clearFixed('leg')">クリア</button></td></tr>
+      <tr><td>お守り</td><td id="fixed-charm-name">（なし）</td><td><button onclick="clearFixed('charm')">クリア</button></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ===== 除外装備設定タブ ===== -->
+<div id="tab-jyogai" class="tab-content equip-setting-tab">
+  <div class="equip-setting-top">
+    <button onclick="clearAllExclude()">全てクリア</button>
+  </div>
+  <table>
+    <thead><tr><th>部位</th><th>装備名</th><th>操作</th></tr></thead>
+    <tbody id="jyogai-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ===== 装飾品除外設定タブ ===== -->
+<div id="tab-decoex" class="tab-content equip-setting-tab">
+  <div class="equip-setting-top">
+    <button onclick="clearDecoExclude()">全てクリア</button>
+  </div>
+  <table>
+    <thead><tr><th>装飾品名</th><th>操作</th></tr></thead>
+    <tbody id="decoex-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ===== 発掘装備設定タブ ===== -->
+<div id="tab-hakkutu" class="tab-content">
+  <div style="padding:5px;font-size:12px;">
+    発掘装備を個別に追加することができます。<br>
+    「発掘を全て含む」にチェックすると全発掘装備を検索対象にします。
+  </div>
+  <div id="hakkutu-list" style="padding:5px;overflow:auto;"></div>
+</div>
+
+<!-- ===== お守りダイアログ ===== -->
+<div id="charm-dialog" class="dialog-overlay">
+  <div class="dialog">
+    <h3>お守り登録・編集</h3>
+    <div class="dialog-row">
+      <label>スキル系統１</label>
+      <select id="cd-kei1"><option value="">（なし）</option></select>
+    </div>
+    <div class="dialog-row">
+      <label>値１</label>
+      <input type="number" id="cd-val1" value="0" min="-15" max="20">
+    </div>
+    <div class="dialog-row">
+      <label>スキル系統２</label>
+      <select id="cd-kei2"><option value="">（なし）</option></select>
+    </div>
+    <div class="dialog-row">
+      <label>値２</label>
+      <input type="number" id="cd-val2" value="0" min="-15" max="20">
+    </div>
+    <div class="dialog-row">
+      <label>スロット</label>
+      <select id="cd-slot">
+        <option value="0">0</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
+    <div class="dialog-btns">
+      <button onclick="saveCharm()">登録</button>
+      <button onclick="closeCharmDialog()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<!-- コンテキストメニュー -->
+<div id="ctx-menu">
+  <div id="ctx-add-myset" onclick="ctxAddMyset()">マイセットに追加する</div>
+  <div id="ctx-fix-head" onclick="ctxFix('head')" style="display:none">頭を固定装備に設定する</div>
+  <div id="ctx-fix-body" onclick="ctxFix('body')" style="display:none">胴を固定装備に設定する</div>
+  <div id="ctx-fix-arm" onclick="ctxFix('arm')" style="display:none">腕を固定装備に設定する</div>
+  <div id="ctx-fix-wst" onclick="ctxFix('wst')" style="display:none">腰を固定装備に設定する</div>
+  <div id="ctx-fix-leg" onclick="ctxFix('leg')" style="display:none">脚を固定装備に設定する</div>
+  <div class="separator"></div>
+  <div id="ctx-excl-head" onclick="ctxExcl('head')" style="display:none">頭を除外装備に追加する</div>
+  <div id="ctx-excl-body" onclick="ctxExcl('body')" style="display:none">胴を除外装備に追加する</div>
+  <div id="ctx-excl-arm" onclick="ctxExcl('arm')" style="display:none">腕を除外装備に追加する</div>
+  <div id="ctx-excl-wst" onclick="ctxExcl('wst')" style="display:none">腰を除外装備に追加する</div>
+  <div id="ctx-excl-leg" onclick="ctxExcl('leg')" style="display:none">脚を除外装備に追加する</div>
+  <div class="separator"></div>
+  <div onclick="ctxCopy()">コピー</div>
+  <div onclick="ctxCopyShort()">省略版コピー</div>
+</div>
+
+<script src="data.js"></script>
+<script src="search.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
